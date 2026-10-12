@@ -5,14 +5,17 @@
 //   ANTHROPIC_API_KEY   your key from console.anthropic.com   (required)
 //   FIREBASE_PROJECT_ID codelinglol                           (required, from your Firebase config)
 //   BIT_MODEL           claude-haiku-5-5                      (optional)
-//   BIT_PER_HOUR        40                                    (optional, questions per player per hour)
+//   BIT_LIMIT           150                                   (optional, questions per player per window)
+//   BIT_WINDOW_HOURS    5                                     (optional, how long the window lasts)
 
 import { webcrypto } from 'node:crypto'
+import { getStore } from '@netlify/blobs'
 const subtle = webcrypto.subtle
 
 const MODEL = process.env.BIT_MODEL || 'claude-haiku-5-5'
 const PROJECT = process.env.FIREBASE_PROJECT_ID
-const PER_HOUR = Number(process.env.BIT_PER_HOUR || 40)
+const LIMIT = Number(process.env.BIT_LIMIT || 150)
+const WINDOW = Number(process.env.BIT_WINDOW_HOURS || 5) * 3600e3
 const LANGS = ['Python', 'JavaScript', 'Java', 'C#', 'C++', 'Lua']
 
 const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
@@ -45,15 +48,24 @@ async function whoIs(req) {
   return ok ? body.sub : null
 }
 
-// ---- simple per-player limit (resets when Netlify restarts the function, set a spend limit in the Anthropic console too)
+// ---- per-player limit: LIMIT questions per WINDOW, counted from their first question in the window.
+// kept in Netlify Blobs so it survives restarts and is shared by every copy of the function
 
-const seen = new Map()
-function allowed(uid) {
-  const hour = Math.floor(Date.now() / 3600e3)
-  const s = seen.get(uid)
-  if (!s || s.hour !== hour) { seen.set(uid, { hour, n: 1 }); return true }
-  return ++s.n <= PER_HOUR
+const memory = new Map()   // backup if blobs ever fails, so Bit keeps working
+async function useOne(uid) {
+  const now = Date.now()
+  let store = null
+  try { store = getStore({ name: 'bit-limits', consistency: 'strong' }) } catch {}
+  let rec = null
+  if (store) { try { rec = await store.get(uid, { type: 'json' }) } catch { store = null } }
+  if (!store) rec = memory.get(uid) || null
+  if (!rec || now - rec.start >= WINDOW) rec = { start: now, n: 0 }
+  if (rec.n >= LIMIT) return { ok: false, resetIn: rec.start + WINDOW - now }
+  rec.n++
+  if (store) { try { await store.setJSON(uid, rec) } catch { memory.set(uid, rec) } } else memory.set(uid, rec)
+  return { ok: true, left: LIMIT - rec.n }
 }
+const waitText = ms => { const m = Math.ceil(ms / 60000), h = Math.floor(m / 60); return h ? `${h}h ${m % 60}m` : `${m}m` }
 
 function rules(lang, screen) {
   return `You are Bit, the friendly helper inside Codeling, an app that teaches coding with short lessons and pop quizzes. Right now the learner is learning ${lang}.
@@ -76,13 +88,21 @@ ${screen}
 }
 
 export default async req => {
+  try { return await handle(req) } catch (e) {
+    console.log('bit crashed', e)
+    return json(500, { error: 'crash', detail: 'Bit\'s server crashed: ' + String(e && e.message || e).slice(0, 200) })
+  }
+}
+
+async function handle(req) {
   if (req.method !== 'POST') return json(405, { error: 'POST only' })
   if (!process.env.ANTHROPIC_API_KEY || !PROJECT) return json(500, { error: 'not_setup' })
 
   let uid
-  try { uid = await whoIs(req) } catch { return json(503, { error: 'upstream' }) }
+  try { uid = await whoIs(req) } catch (e) { return json(503, { error: 'upstream', detail: 'Could not check your login with Google: ' + String(e && e.message || e).slice(0, 150) }) }
   if (!uid) return json(401, { error: 'login' })
-  if (!allowed(uid)) return json(429, { error: 'rate_limited' })
+  const quota = await useOne(uid)
+  if (!quota.ok) return json(429, { error: 'rate_limited', detail: `You've used all ${LIMIT} Bit questions for now. More in ${waitText(quota.resetIn)}.` })
 
   let input
   try { input = await req.json() } catch { return json(400, { error: 'bad_request' }) }
@@ -101,8 +121,12 @@ export default async req => {
     body: JSON.stringify({ model: MODEL, max_tokens: 700, stream: true, system: rules(lang, screen), messages: turns }),
   })
   if (!r.ok || !r.body) {
-    console.log('anthropic error', r.status, await r.text().catch(() => ''))
-    return json(r.status === 429 ? 429 : 502, { error: r.status === 429 ? 'rate_limited' : 'upstream' })
+    const raw = await r.text().catch(() => '')
+    console.log('anthropic error', r.status, raw)
+    let why = ''
+    try { const e = JSON.parse(raw).error; why = `${e.type}: ${e.message}` } catch { why = raw.slice(0, 120) }
+    // tell the page what claude said (never includes the key) so the owner can see what to fix
+    return json(r.status === 429 ? 429 : 502, { error: r.status === 429 ? 'rate_limited' : 'upstream', detail: `Claude said (${r.status}) ${why}`.slice(0, 300) })
   }
 
   // turn Claude's event stream into plain text the page can show as it arrives
