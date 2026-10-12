@@ -1,0 +1,92 @@
+CODELING - HOW TO TURN ON ACCOUNTS (about 10 minutes, free)
+
+Accounts, the leaderboard, leagues and profile links use Firebase (Google's free app backend).
+Until you do this, Codeling still works, it just saves progress in each person's browser.
+
+
+1. MAKE A FIREBASE PROJECT
+   - Go to https://console.firebase.google.com and sign in with a Google account.
+   - Click "Create a project" (or "Add project"). Name it "codeling". You can turn Google Analytics off.
+
+2. TURN ON LOGIN
+   - In the left menu: Build > Authentication > Get started.
+   - Under "Sign-in method", turn on "Email/Password".
+   - Also turn on "Google" (pick your email as the support email) if you want "Continue with Google".
+
+3. MAKE THE DATABASE
+   - Left menu: Build > Firestore Database > Create database.
+   - Pick a location near you, start in "production mode".
+   - Open the "Rules" tab, delete what's there, paste everything from firestore.rules (in this folder), click Publish.
+
+4. GET YOUR CONFIG
+   - Click the gear icon (top left) > Project settings.
+   - Scroll to "Your apps", click the </> (Web) button, name it "codeling", click Register.
+   - It shows a block like:  const firebaseConfig = { apiKey: "...", authDomain: "...", ... };
+     Copy just the part from { to } (including the curly brackets).
+   This config is meant to be public, it's fine to put it in your website.
+
+5. PUT IT IN CODELING
+   - Open index.html with Notepad (right click > Open with > Notepad).
+   - Press Ctrl+F and search for:  ACCOUNTS SETUP
+   - A few lines under it, change
+         window.CODELING_FIREBASE = null
+     to
+         window.CODELING_FIREBASE = { apiKey: "...", authDomain: "...", projectId: "...", ... }
+     (paste your own config there). Save.
+
+6. PUT THE SITE ONLINE (GitHub Pages)
+   - Make a free account at https://github.com, then click New repository, name it "codeling", make it Public.
+   - Click "uploading an existing file" and drag in index.html. Click Commit.
+   - Go to the repo's Settings > Pages. Under "Branch" pick "main" and "/ (root)", click Save.
+   - After a minute your site is at  https://YOURNAME.github.io/codeling/
+
+7. LET YOUR SITE USE LOGIN
+   - Back in Firebase: Authentication > Settings > Authorized domains > Add domain.
+   - Add:  YOURNAME.github.io
+
+Done. Open your site, click "Log in", and make an account.
+
+
+GOOD TO KNOW
+- Opening index.html by double clicking it won't log in properly. Use the GitHub Pages link.
+- The leaderboard trusts each player's own XP, so a sneaky person could fake theirs. Fine for friends and
+  classes. Stopping that for real needs a server (Firebase Cloud Functions), which is a bigger job.
+- The free Firebase plan covers thousands of players a day.
+
+
+DISCORD / LINK PREVIEW
+- Upload codelingEMBED.png to the same place as index.html (same GitHub repo, same folder).
+- The preview is set up for the address https://codeling.lol/ . If your site lives somewhere else
+  (like https://YOURNAME.github.io/codeling/), open index.html in Notepad, Ctrl+F "codeling.lol/",
+  and replace the 3 addresses with yours (keep the / at the end).
+- Discord remembers old previews for a while. If it shows an old one, add ?v=2 to the end of the link.
+
+
+TURN ON BIT (THE AI HELPER) ON YOUR SITE
+Bit uses Claude. Your Claude key stays secret on Netlify, never in index.html. Only logged-in players can use Bit,
+and each player gets 40 questions an hour, so strangers can't run up your bill.
+
+1. GET A CLAUDE KEY
+   - Go to https://console.anthropic.com and sign up.
+   - Billing: add a little credit (5 dollars lasts a long time, each question costs about a tenth of a cent).
+   - Limits: set a monthly spend limit (like 10 dollars) so it can never surprise you.
+   - API keys > Create key. Copy it. Never paste it in index.html, Discord, or a chat.
+
+2. ADD IT TO NETLIFY
+   - Netlify > your site > Site configuration > Environment variables > Add a variable.
+   - Key: ANTHROPIC_API_KEY   Value: your key  (tick "Contains secret values" if it asks)
+   - Add another one.  Key: FIREBASE_PROJECT_ID   Value: codelinglol
+
+3. DEPLOY WITH GITHUB (drag and drop can't run Bit's server code)
+   - On github.com make a repo called codeling (Private is fine).
+   - Upload EVERYTHING in this folder: index.html, codelingEMBED.png, netlify.toml and the netlify folder.
+     (drag the folders in too, GitHub keeps them)
+   - Netlify > your site > Site configuration > Build & deploy > Link repository (Link to Git),
+     pick GitHub, pick the codeling repo. Leave the build command empty. Click Deploy.
+   - From now on, changing a file on GitHub updates the site by itself.
+
+4. TEST
+   - Open your site, log in, open a lesson, press "Explain it simpler".
+   - Bit says "not set up on this website" -> the netlify folder didn't get uploaded, or the site isn't linked to GitHub.
+   - Bit says "the site owner still needs to add the Claude key" -> step 2 is missing, then redeploy
+     (Deploys > Trigger deploy > Deploy site).

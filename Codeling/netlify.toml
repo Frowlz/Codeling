@@ -1,0 +1,4 @@
+# tells Netlify: the site is this folder as-is (no build), and Bit's server code is in netlify/functions
+[build]
+  publish = "."
+  functions = "netlify/functions"
